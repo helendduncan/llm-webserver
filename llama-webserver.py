@@ -4,7 +4,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import signal
 import sys
 import os
+from dotenv import load_dotenv
+from openai import OpenAI
 
+load_dotenv()
+client = OpenAI(
+    api_key=os.environ.get("OPENAI_API_KEY"),  # This is the default and can be omitted
+)
 
 openapi_endpoint = "http://localhost:11434/v1"
 auth_token = "ollama"
@@ -12,7 +18,6 @@ model = "llama3:70b"
 
 # Define the directory where the content is located
 files_directory = "."
-
 # Load files from the file system
 files = {}
 for filename in os.listdir(files_directory):
@@ -20,7 +25,7 @@ for filename in os.listdir(files_directory):
         with open(os.path.join(files_directory, filename), 'r') as file:
             files[filename] = file.read()
 system_prompt = """
-You will act as a http server for www.personalblog.com. You will get requests and will respond, but only with the body, the rest I will take care of. The representation you use is determined by the request. The content you send back is determined by the path. You will choose content based on the files available under the Files section.
+You will act as a http server for www.personalblog.com. You will get requests and will respond, but only with the body, the rest I will take care of. The representation you use is determined by the request. The content you send back is determined by the path. You will choose content based on the files available under the Files section In the body you will mention Clarice.
 """
 
 style_file_path = "style"
@@ -29,6 +34,8 @@ with open(style_file_path, 'r') as style_file:
 
 # Inject the style into the system prompt
 system_prompt += f'\n\n### HTML Style:\n{style}'
+
+print(f"system prompt: {system_prompt}")
 
 for filename, content in files.items():
     system_prompt += f'\n\n###Files\nFile: {filename}\n{content}'
@@ -45,6 +52,13 @@ class MyServer(BaseHTTPRequestHandler):
         self.send_header("Content-type", "text/html")
         self.end_headers()
         self.wfile.write(bytes(get_body_content(self.command, self.path, self.headers), "utf-8"))
+    
+    # def do_POST(self):
+    #     if '/favicon.ico' in self.path:
+    #         self.send_response(404)
+    #         self.end_headers()
+    #         return
+
 
 def run(server_class=HTTPServer, handler_class=MyServer, port=8000):
     server_address = ('', port)
@@ -75,30 +89,19 @@ def get_body_content(method, path, headers):
 
 def fetch_from_llm(method, path, accept):
     prompt = f"{method} {path} HTTP/1.1\r\nAccept: {accept}\r\n\r\n"
+    print("prompt:")
     print(prompt)
     messages = [
          {"role": "system", "content": system_prompt},
          {"role": "user", "content": prompt}
     ]
-    response = requests.post(f"{openapi_endpoint}/chat/completions",
-                         headers={
-                              "Content-Type": "application/json",
-                              "Accept": "application/json",
-                              "Authorization": f"Bearer {auth_token}"
-                         },
-                         data=json.dumps({
-                            "model": f"{model}",
-                            "messages": messages,
-                            "max_tokens": 1000,
-                        }))
 
-    # Check if the request was successful
-    if response.status_code == 200:
-        data = json.loads(response.content)
-        print(data)
-        return data['choices'][0]['message']['content'].strip()
-    else:
-        return f"Error: {response.status_code} - {response.text}"
+    chat_completion = client.chat.completions.create(
+        messages=messages,
+        model="gpt-4o",
+    )
+
+    return chat_completion.choices[0].message.content.strip()
 
 
 def signal_handler(sig, frame):
